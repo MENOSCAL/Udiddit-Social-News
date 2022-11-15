@@ -1,0 +1,164 @@
+CREATE TABLE "users" (
+  "id" SERIAL PRIMARY KEY,
+  "username" VARCHAR(25) UNIQUE NOT NULL,
+  "audit_time" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "valid_username" CHECK (
+    LENGTH(TRIM("username")) > 0
+  )
+);
+CREATE INDEX "find_usernames_by_partial" ON "users" (
+  LOWER("username") VARCHAR_PATTERN_OPS
+);
+
+CREATE TABLE "topics" (
+  "id" SERIAL PRIMARY KEY,
+  "name" VARCHAR(30) UNIQUE NOT NULL,
+  "description" VARCHAR(500),
+  "user_id" INTEGER NOT NULL,
+  CONSTRAINT "valid_user_id" FOREIGN KEY ("user_id")
+    REFERENCES "users" ("id"),
+  CONSTRAINT "valid_name" CHECK (
+    LENGTH(TRIM("name")) > 0
+  )
+);
+CREATE INDEX "find_topics_by_partial" ON "topics" (
+  LOWER("name") VARCHAR_PATTERN_OPS
+);
+
+CREATE TABLE "posts" (
+  "id" SERIAL PRIMARY KEY,
+  "title" VARCHAR(100) NOT NULL,
+  "url" TEXT,
+  "content" TEXT,
+  "user_id" INTEGER,
+  "topic_id" INTEGER NOT NULL,
+  "audit_time" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "valid_user_id" FOREIGN KEY ("user_id")
+    REFERENCES "users" ("id") ON DELETE SET NULL,
+  CONSTRAINT "valid_topic_id" FOREIGN KEY ("topic_id")
+    REFERENCES "topics" ("id") ON DELETE CASCADE,
+  CONSTRAINT "valid_url_and_content" CHECK (
+    ("url" IS NOT NULL AND "content" IS NULL)
+    OR ("url" IS NULL AND "content" IS NOT NULL)
+  ),
+  CONSTRAINT "valid_title" CHECK (
+    LENGTH(TRIM("title")) > 0
+  )
+);
+CREATE INDEX "find_posts_by_partial" ON "posts" (
+  LOWER("title") VARCHAR_PATTERN_OPS
+);
+CREATE INDEX "find_posts_by_topic_id" ON "posts" ("topic_id");
+CREATE INDEX "find_posts_by_user_id" ON "posts" ("user_id");
+CREATE INDEX "find_posts_by_url" ON "posts" ("url");
+
+CREATE TABLE "comments" (
+  "id" SERIAL PRIMARY KEY,
+  "content" TEXT NOT NULL,
+  "user_id" INTEGER,
+  "post_id" INTEGER NOT NULL,
+  "parent_id" INTEGER,
+  "audit_time" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "valid_user_id" FOREIGN KEY ("user_id")
+    REFERENCES "users" ("id") ON DELETE SET NULL,
+  CONSTRAINT "valid_post_id" FOREIGN KEY ("post_id")
+    REFERENCES "posts" ("id") ON DELETE CASCADE,
+  CONSTRAINT "valid_parent_id" FOREIGN KEY ("parent_id")
+    REFERENCES "comments" ("id") ON DELETE CASCADE,
+  CONSTRAINT "valid_content" CHECK (
+    LENGTH(TRIM("content")) > 0
+  )
+);
+CREATE INDEX "find_comments_by_parent_id_and_id" ON "comments" (
+  "parent_id", "id"
+);
+CREATE INDEX "find_comments_by_user_id" ON "comments" ("user_id");
+
+CREATE TABLE "votes" (
+  "id" SERIAL PRIMARY KEY,
+  "user_id" INTEGER,
+  "post_id" INTEGER NOT NULL,
+  "vote_up" SMALLINT,
+  "vote_down" SMALLINT,
+  CONSTRAINT "valid_user_id" FOREIGN KEY ("user_id")
+    REFERENCES "users" ("id") ON DELETE SET NULL,
+  CONSTRAINT "valid_post_id" FOREIGN KEY ("post_id")
+    REFERENCES "posts" ("id") ON DELETE CASCADE,
+  CONSTRAINT "valid_up_and_down" CHECK (
+    ("vote_up" = 1 AND "vote_down" IS NULL)
+    OR ("vote_up" IS NULL AND "vote_down" = 1)
+  )
+);
+CREATE UNIQUE INDEX "find_votes_by_user_id_and_post_id" ON "votes" (
+  "user_id", "post_id"
+);
+CREATE INDEX "find_votes_by_post_id" ON "votes" ("post_id");
+
+
+INSERT INTO "users" ("username")
+  SELECT "username"
+  FROM "bad_posts"
+  UNION
+  SELECT "username"
+  FROM "bad_comments"
+  UNION
+  SELECT REGEXP_SPLIT_TO_TABLE("upvotes", ',')
+  FROM "bad_posts"
+  UNION
+  SELECT REGEXP_SPLIT_TO_TABLE("downvotes", ',')
+  FROM "bad_posts";
+
+INSERT INTO "topics" ("name", "user_id")
+  SELECT DISTINCT ON (bp."topic") bp."topic", u."id"
+  FROM "bad_posts" bp
+  JOIN "users" u
+  ON (bp."username" = u."username");
+
+INSERT INTO "posts" ("title", "url", "content", "user_id", "topic_id")
+  SELECT LEFT (bp."title", 100), bp."url", bp."text_content", u."id", t."id"
+  FROM "bad_posts" bp
+  JOIN "users" u
+  ON (bp."username" = u."username")
+  JOIN "topics" t
+  ON (bp."topic" = t."name");
+
+WITH "bad_posts_cp" AS (
+    SELECT "id", LEFT ("title", 100) "title"
+    FROM "bad_posts"
+    )
+INSERT INTO "comments" ("content", "user_id", "post_id")
+  SELECT bc."text_content", u."id", p."id"
+  FROM "bad_comments" bc
+  JOIN "users" u
+  ON (bc."username" = u."username")
+  JOIN "bad_posts_cp" bpc
+  ON (bc."post_id" = bpc."id")
+  JOIN "posts" p
+  ON (bpc."title" = p."title");
+
+WITH "bad_posts_like" AS (
+    SELECT "title", REGEXP_SPLIT_TO_TABLE("upvotes", ',') "username"
+    FROM "bad_posts"
+    )
+INSERT INTO "votes" ("user_id", "post_id", "vote_up")
+  SELECT u."id", p."id", 1
+  FROM "bad_posts_like" bpl
+  JOIN "users" u
+  ON (bpl."username" = u."username")
+  JOIN "posts" p
+  ON (bpl."title" = p."title");
+
+WITH "bad_posts_dislike" AS (
+    SELECT "title", REGEXP_SPLIT_TO_TABLE("downvotes", ',') "username"
+    FROM "bad_posts"
+    )
+INSERT INTO "votes" ("user_id", "post_id", "vote_down")
+  SELECT u."id", p."id", 1
+  FROM "bad_posts_dislike" bpd
+  JOIN "users" u
+  ON (bpd."username" = u."username")
+  JOIN "posts" p
+  ON (bpd."title" = p."title");
+
+DROP TABLE "bad_posts";
+DROP TABLE "bad_comments";
