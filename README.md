@@ -1,16 +1,16 @@
 # Udiddit Social News
 
-Helped the company see how they might optimize their business practices using a Udiddit database.
+* Helped the company see how they might optimize their business practices using a Udiddit database.
 
 ## Table of Contents
 
 * [Instructions](#instructions)
-* [Creator](#creators)
+* [Creators](#creators)
 
 ## Instructions
 
-* clone the project
-* open the PDF file
+* Clone project
+* Open the PDF file
 
 ## Creators
 
